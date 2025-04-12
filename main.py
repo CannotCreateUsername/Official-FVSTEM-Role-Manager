@@ -13,10 +13,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
 intents.members = True
-bot = commands.Bot(command_prefix="!", intents=intents)
-
-client = discord.Client(intents=intents)
-
+bot = commands.Bot(command_prefix="~", intents=intents)
 
 @bot.tree.command(name="hello", description="Say hello to the bot")
 async def first_command(interaction):
@@ -98,18 +95,24 @@ async def increment_grade(member, guild, current_role_id, grade_roles):
 
     if current_grade is None:
         try:
-            await member.send("Error: Could not determine your grade level.")
+            await member.send(f"Error: Could not determine your grade level in {guild.name}.")
         except discord.HTTPException:
             print(f"Could not DM {member.name}.")
         return
 
     if current_grade == "ALUMNI":
-        print(f"{member.name} is already an Alumni.")
+        print(f"{member.name} is already an Alumni in {guild.name}.")
         return  # Exit the function early
 
-    next_grade = current_grade + 1 if isinstance(current_grade,
-                                                 int) else "ALUMNI"
+    next_grade = current_grade + 1 if isinstance(current_grade, int) else "ALUMNI"
     new_role_id = grade_roles.get(next_grade)
+
+    # Corrected logic to handle the transition to Alumni
+    if current_grade == 12:
+        new_grade = "ALUMNI"
+        new_role_id = grade_roles.get("ALUMNI")
+    else:
+        new_grade = next_grade
 
     old_role = discord.utils.get(guild.roles, id=current_role_id)
     new_role = discord.utils.get(guild.roles, id=new_role_id)
@@ -120,9 +123,9 @@ async def increment_grade(member, guild, current_role_id, grade_roles):
         await member.add_roles(new_role)
 
     try:
-        await member.send(f"Your grade has been updated to {next_grade}.")
+        await member.send(f"Your grade has been updated to **[{new_grade}]** in **{guild.name}**.")
     except discord.HTTPException:
-        print(f"Could not DM {member.name}, but grade was updated.")
+        print(f"Could not DM {member.name}, but grade was updated in {guild.name}.")
 
 
 async def decrement_grade(member, guild, current_role_id, grade_roles):
@@ -131,19 +134,16 @@ async def decrement_grade(member, guild, current_role_id, grade_roles):
 
     if current_grade is None:
         try:
-            await member.send("Error: Could not determine your grade level.")
+            await member.send(f"Error: Could not determine your grade level in {guild.name}.")
         except discord.HTTPException:
             print(f"Could not DM {member.name}.")
         return
 
-    if isinstance(
-            current_grade,
-            int) and current_grade == 9:  # Prevent demotion below 9th grade
-        print(f"{member.name} is already in 9th grade.")
+    if isinstance(current_grade, int) and current_grade == 9:  # Prevent demotion below 9th grade
+        print(f"{member.name} is already in 9th grade in {guild.name}.")
         return
 
-    previous_grade = current_grade - 1 if isinstance(current_grade,
-                                                     int) else 12
+    previous_grade = current_grade - 1 if isinstance(current_grade, int) else 12
     new_role_id = grade_roles.get(previous_grade)
 
     old_role = discord.utils.get(guild.roles, id=current_role_id)
@@ -155,89 +155,89 @@ async def decrement_grade(member, guild, current_role_id, grade_roles):
         await member.add_roles(new_role)
 
     try:
-        await member.send(f"Your grade has been updated to {previous_grade}.")
+        await member.send(f"Your grade has been updated to **[{previous_grade}]** in **{guild.name}**.")
     except discord.HTTPException:
-        print(f"Could not DM {member.name}, but grade was updated.")
+        print(f"Could not DM {member.name}, but grade was updated in {guild.name}.")
 
 
-@bot.command()
-async def increment(ctx, member: discord.Member):
-    grade_roles = await get_grade_roles(ctx.guild)
+@bot.tree.command(name="increment", description="Promote a member's grade")
+async def increment_slash(interaction: discord.Interaction, member: discord.Member):
+    grade_roles = await get_grade_roles(interaction.guild)
     for grade, role_id in grade_roles.items():
-        role = discord.utils.get(ctx.guild.roles, id=role_id)
+        role = discord.utils.get(interaction.guild.roles, id=role_id)
         if role in member.roles:
-            await increment_grade(member, ctx.guild, role_id, grade_roles)
-            await ctx.send(f"{member.mention} has been promoted!")
-            break
+            await increment_grade(member, interaction.guild, role_id, grade_roles)
+            await interaction.response.send_message(f"{member.mention} has been promoted!")
+            return
+    await interaction.response.send_message("Could not find a valid grade role for this member.")
 
 
-@bot.command()
-async def decrement(ctx, member: discord.Member):
-    grade_roles = await get_grade_roles(ctx.guild)
+@bot.tree.command(name="decrement", description="Demote a member's grade")
+async def decrement_slash(interaction: discord.Interaction, member: discord.Member):
+    grade_roles = await get_grade_roles(interaction.guild)
+    found_role = False
     for grade, role_id in grade_roles.items():
-        role = discord.utils.get(ctx.guild.roles, id=role_id)
+        role = discord.utils.get(interaction.guild.roles, id=role_id)
         if role in member.roles:
-            if isinstance(grade, int) and grade == 9:
-                await ctx.send("Cannot demote below 9th grade.")
-                return
-            await member.remove_roles(role)
-            previous_grade = grade - 1 if isinstance(grade, int) else 12
-            new_role_id = grade_roles.get(previous_grade)
-            if new_role_id:
-                await member.add_roles(discord.Object(id=new_role_id))
-                await ctx.send(f"{member.mention} has been demoted!")
+            await decrement_grade(member, interaction.guild, role_id, grade_roles)
+            await interaction.response.send_message(f"{member.mention} has been demoted!")
+            found_role = True
             break
+    if not found_role:
+        await interaction.response.send_message("Could not find a valid grade role for this member.")
 
 
-@bot.command()
-async def schedule_update(ctx, month: int, day: int):
+@bot.tree.command(name="schedule_update", description="Schedule an annual grade update")
+async def schedule_update_slash(interaction: discord.Interaction, month: int, day: int):
     save_schedule(month, day)  # Save to file
-    scheduler.add_job(lambda: increment_all_grades(ctx.guild),
+    scheduler.add_job(lambda: increment_all_grades(interaction.guild),
                       'date',
                       run_date=datetime(datetime.now().year, month, day))
-    await ctx.send(f"Grade update scheduled for {month}/{day}!")
+    await interaction.response.send_message(f"Grade update scheduled for {month}/{day}!")
 
 
-@bot.command()
-async def reschedule_update(ctx, month: int, day: int):
+@bot.tree.command(name="reschedule_update", description="Reschedule the annual grade update")
+async def reschedule_update_slash(interaction: discord.Interaction, month: int, day: int):
     scheduler.remove_all_jobs()
     save_schedule(month, day)  # Save to file
-    await schedule_update(ctx, month, day)
-    await ctx.send(f"Grade update rescheduled for {month}/{day}!")
+    scheduler.add_job(lambda: increment_all_grades(interaction.guild),
+                        'date',
+                        run_date=datetime(datetime.now().year, month, day))
+    await interaction.response.send_message(f"Grade update rescheduled for {month}/{day}!")
 
 
-@bot.command()
-async def cancel_update(ctx):
+@bot.tree.command(name="cancel_update", description="Cancel the scheduled grade update")
+async def cancel_update_slash(interaction: discord.Interaction):
     scheduler.remove_all_jobs()  # Remove scheduled jobs
     try:
         os.remove("schedule.json")  # Delete the saved schedule file
     except FileNotFoundError:
         pass  # If the file doesn't exist, ignore the error
 
-    await ctx.send("Scheduled grade update has been canceled.")
+    await interaction.response.send_message("Scheduled grade update has been canceled.")
 
 
-@bot.command()
-async def check_schedule(ctx):
+@bot.tree.command(name="check_schedule", description="Check the date of the scheduled grade update")
+async def check_schedule_slash(interaction: discord.Interaction):
     try:
         with open("schedule.json", "r") as f:
             schedule_data = json.load(f)
             month, day = schedule_data["month"], schedule_data["day"]
-            await ctx.send(f"Next scheduled grade update is on {month}/{day}.")
+            await interaction.response.send_message(f"Next scheduled grade update is on {month}/{day}.")
     except (FileNotFoundError, json.JSONDecodeError):
-        await ctx.send("No scheduled grade update found.")
+        await interaction.response.send_message("No scheduled grade update found.")
 
 
-@bot.command()
-async def increment_all(ctx):
-    await increment_all_grades(ctx.guild)
-    await ctx.send("All grades have been updated!")
+@bot.tree.command(name="increment_all", description="Increment the grade for all members")
+async def increment_all_slash(interaction: discord.Interaction):
+    await increment_all_grades(interaction.guild)
+    await interaction.response.send_message("All grades have been updated!")
 
 
-@bot.command()
-async def decrement_all(ctx):
-    await decrement_all_grades(ctx.guild)
-    await ctx.send("All grades have been reverted!")
+@bot.tree.command(name="decrement_all", description="Decrement the grade for all members")
+async def decrement_all_slash(interaction: discord.Interaction):
+    await decrement_all_grades(interaction.guild)
+    await interaction.response.send_message("All grades have been reverted!")
 
 
 @bot.event
@@ -246,6 +246,5 @@ async def on_ready():
     load_schedule()  # Load and restore schedule if it exists
     schedule_annual_update()  # Ensure annual update is scheduled
     await bot.tree.sync()
-
 
 bot.run(TOKEN)
